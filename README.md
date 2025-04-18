@@ -12,7 +12,7 @@ SoundCloud web app wrapper for MacOs with tab management and .
 ![App screenshot.](screenshot1.png)
 
 
-///////// Forked from https://github.com/rlacombe/SoundCloud-macOS/ :
+///////// Forked from https://github.com/rlacombe/SoundCloud-macOS/ ////////////
 
 
 SoundCloud doesn't offer a native macOS app: let me fix that for them! 
