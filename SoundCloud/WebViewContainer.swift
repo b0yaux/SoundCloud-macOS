@@ -7,9 +7,9 @@ class WebViewContainer: NSObject, ObservableObject, WKScriptMessageHandler, WKNa
     var webView: CustomWKWebView
     @Published var currentURL: URL?
     @Published var currentTitle: String?
-    @Published var canGoBack: Bool = false // <-- Add Published property
-    @Published var canGoForward: Bool = false // <-- Optional: Add if needed later
-
+    @Published var canGoBack: Bool = false
+    @Published var canGoForward: Bool = false
+    
     var onOpenNewTab: ((URL) -> Void)?
     var onOpenNewWindow: ((URL) -> Void)?
 
@@ -68,17 +68,15 @@ class WebViewContainer: NSObject, ObservableObject, WKScriptMessageHandler, WKNa
         self.webView.navigationDelegate = self.coordinator // Use Coordinator
         self.webView.uiDelegate = self.coordinator       // Use Coordinator
 
-        // --- Add Combine observers for navigation state ---
         webView.publisher(for: \.canGoBack)
-            .receive(on: DispatchQueue.main) // Ensure updates are on the main thread
+            .receive(on: DispatchQueue.main)
             .assign(to: \.canGoBack, on: self)
             .store(in: &cancellables)
-
         webView.publisher(for: \.canGoForward)
             .receive(on: DispatchQueue.main)
             .assign(to: \.canGoForward, on: self)
             .store(in: &cancellables)
-        // --- End Combine observers ---
+
         
         // Pass through callbacks from CustomWKWebView
         self.webView.onOpenNewTab = { [weak self] url in
@@ -91,6 +89,12 @@ class WebViewContainer: NSObject, ObservableObject, WKScriptMessageHandler, WKNa
         // Load the initial URL
         let request = URLRequest(url: url)
         self.webView.load(request)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.canGoBack = self.webView.canGoBack
+            self.canGoForward = self.webView.canGoForward
+        }
     }
 
 

@@ -2,14 +2,15 @@
 
 SoundCloud web app wrapper for MacOs with tab management and .
 
-- Instant download using scdl in a downloader popover with URL pre-fill. When standing on a track/album/playlist/user page, download super easily using shortcuts "cmd+D" (show download popover) and "Enter" (start download of pre-filled URL) or using GUI.
-- Debug console ladybug for scdl / ffmpeg troubleshooting
+- Instant download using scdl in a downloader popup with pre-filled URL. When standing on a track/album/playlist/ page, download super easily using shortcuts "cmd+D" (show download popover) and "Enter" (start download of pre-filled URL) or using GUI.
+- Debug console for scdl / ffmpeg & other troubleshooting
 - Added preferences panel: for now only light/dark mode settings included there
 - "Cmd+T", "Cmd+W", "Cmd+D", "Cmd+L", and "Cmd+," keyboard shortcuts
 - Better navigation : Back and Forward navigation buttons with state tracking and proper Open Link in New Tab command in context menu.
 - UI/UX polish
 
-![App screenshot.](screenshot1.png)
+![App screenshot.](screenshot2.png)
+![App screenshot.](screenshot3.png)
 
 
 ///////// Forked from https://github.com/rlacombe/SoundCloud-macOS/ ////////////

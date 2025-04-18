@@ -22,9 +22,11 @@ struct DownloadItem: Identifiable {
     let id = UUID()
     let url: URL
     var status: Status
-    var progress: Double // Not used in this example, but ready for future use
+    var progress: Double
     var fileName: String
+    var process: Process? // Add this
 }
+
 
 import AppKit
 
@@ -55,6 +57,8 @@ struct ContentView: View {
     @State private var downloadDirectory: URL = URL(fileURLWithPath: NSHomeDirectory() + "/Music/downloaded")
     @State private var isDownloadsPopoverFocused: Bool = false // For focusing TextField
     @State private var currentDownloadProcess: Process? = nil
+    @State private var useFLAC: Bool = false
+    
 
 
     let logger = Logger(subsystem: "com.yourapp.soundcloud", category: "ui")
@@ -91,12 +95,18 @@ struct ContentView: View {
             }
         }
     }
-    func stopCurrentDownload() {
-        currentDownloadProcess?.terminate()
-        currentDownloadProcess = nil
-        // Optionally update download status/UI here
+    
+    func stopDownload(for item: DownloadItem) {
+        // Only stop if this is the current download
+        if let process = currentDownloadProcess, downloads.contains(where: { $0.id == item.id && $0.status == .downloading }) {
+            process.terminate()
+            currentDownloadProcess = nil
+            if let idx = downloads.firstIndex(where: { $0.id == item.id }) {
+                downloads[idx].status = .failed
+                debugMessages.append("Download manually stopped for \(item.fileName)")
+            }
+        }
     }
-
 
     var body: some View {
         // Use NavigationStack to host the toolbar correctly
@@ -148,6 +158,11 @@ struct ContentView: View {
                         autofillDownloadURLAndShowPopover()
                     } label: {
                         Image(systemName: "arrow.down.circle")
+                            .foregroundColor(
+                                downloads.last?.status == .completed
+                                ? Color(red: 0, green: 0.9, blue : 0.1) // Green downloads icon when success
+                                : .primary
+                            )
                     }
                     .help("Download Track/Playlist/Album/User (Cmd+D)")
                     .keyboardShortcut("d", modifiers: [.command]) // Use Cmd+D standard
@@ -162,9 +177,11 @@ struct ContentView: View {
                             openDownloadsFolder: openDownloadsFolder,
                             isInitiallyFocused: $isDownloadsPopoverFocused,
                             currentDownloadProcess: $currentDownloadProcess,
-                            stopDownload: stopCurrentDownload
+                            stopDownloadForItem: stopDownload, // <-- NEW
+                            useFLAC: $useFLAC
                         )
-                        .frame(width: 400)
+
+                        .frame(minWidth: 400) // No height!
                         .padding()
                         .onDisappear {
                             isDownloadsPopoverFocused = false // Reset focus trigger
@@ -178,6 +195,11 @@ struct ContentView: View {
                         showDebugPopover = true
                     } label: {
                         Image(systemName: "ladybug")
+                            .foregroundColor(
+                                downloads.last?.status == .failed
+                                ? Color(red: 1.0, green: 0.35, blue: 0.0) // your red-orange
+                                : .primary
+                            )
                     }
                     .help("Show Debug Console (Cmd+L)")
                     .keyboardShortcut("l", modifiers: [.command]) // Use Cmd+L standard
@@ -197,13 +219,10 @@ struct ContentView: View {
 
     // MARK: - UI Components
 
+    // Tab bar that distributes tabs evenly.
     var tabBar: some View {
         GeometryReader { geo in
-            let tabCount = CGFloat(tabManager.tabs.count)
-            let visibleTabCount = max(1, min(tabCount, 10)) // always at least 1 to avoid division by zero
-            let availableWidth = geo.size.width
-            let tabWidth = availableWidth / visibleTabCount
-
+            let tabWidth = geo.size.width / CGFloat(tabManager.tabs.count)
             HStack(spacing: 0) {
                 ForEach(tabManager.tabs) { tab in
                     TabBarItemView(
@@ -215,13 +234,10 @@ struct ContentView: View {
                     .frame(width: tabWidth)
                 }
             }
-            
-            .frame(height: geo.size.height)
         }
         .frame(height: 30)
-        .id(UUID())
+        .background(Color(NSColor.windowBackgroundColor))
     }
-
 
 
     var contentArea: some View {
@@ -268,19 +284,12 @@ struct ContentView: View {
             }
             // Cmd+W closes tab
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                // Cmd+W: close tab
                 if event.modifierFlags.contains(.command),
                    event.charactersIgnoringModifiers?.lowercased() == "w" {
                     if let selected = self.tabManager.selectedTab {
-                        if self.tabManager.tabs.count > 1 {
-                            self.tabManager.closeTab(selected)
-                        } else {
-                            // Optionally, reset the current tab to a start page:
-                            selected.container.webView.load(URLRequest(url: URL(string: "https://soundcloud.com")!))
-
-                        }
-                        return nil
+                        self.tabManager.closeTab(selected)
                     }
+                    return nil
                 }
 
                 // Cmd+T: new tab
@@ -291,7 +300,12 @@ struct ContentView: View {
                     }
                     return nil
                 }
-
+                // Cmd+R: reload tab
+                if event.modifierFlags.contains(.command),
+                    event.charactersIgnoringModifiers?.lowercased() == "r" {
+                    tabManager.selectedTab?.container.reload()
+                    return nil
+                }
 
                 // Cmd+L: toggle debug popover
                 if event.modifierFlags.contains(.command),
@@ -309,6 +323,7 @@ struct ContentView: View {
                     }
                     return nil
                 }
+                
                 return event // always return event for all other keys
             }
 
@@ -389,20 +404,29 @@ struct ContentView: View {
             }
         }
 
-    // MARK: - Download Logic (Keep your existing startDownload, openDownloadsFolder)
-    func startDownload(_ urlString: String, to directory: URL) {
-        // ... (Your existing implementation is fine) ...
+    // MARK: - Download Logic
+    func startDownload(_ urlString: String, to directory: URL, useFLAC: Bool) {
+
         guard let url = URL(string: urlString), !urlString.isEmpty else {
             debugMessages.append("No valid URL to download.")
             return
         }
+        
+        // Writing command with arguments
         let scdlPath = "\(realUserHomeDirectory())/.local/bin/scdl"
-        let arguments = ["-l", url.absoluteString, "--path", directory.path]
+        var arguments = ["-l", url.absoluteString, "--path", directory.path]
+        if useFLAC {
+                arguments.append("--flac")
+            }
+        arguments.append("-c")
+        
+        
         debugMessages.append("Running: \(scdlPath) \(arguments.joined(separator: " "))")
         if !FileManager.default.isExecutableFile(atPath: scdlPath) {
             debugMessages.append("ERROR: scdl not found at \(scdlPath).")
             return
         }
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: scdlPath)
         process.arguments = arguments
@@ -411,24 +435,25 @@ struct ContentView: View {
         let ffmpegPaths = [ "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", env["PATH"] ?? "" ]
         env["PATH"] = ffmpegPaths.joined(separator: ":")
         process.environment = env
-
-        self.currentDownloadProcess = process
-            process.terminationHandler = { proc in
-                DispatchQueue.main.async {
-                    self.currentDownloadProcess = nil
-                    // ... update download status ...
-                }
-            }
         
+        // --- Place this block here ---
         let fileName = url.lastPathComponent // Simple filename guess
-        let downloadItem = DownloadItem(url: url, status: .downloading, progress: 0, fileName: fileName)
+        let downloadItem = DownloadItem(url: url, status: .downloading, progress: 0, fileName: fileName, process: process)
         downloads.append(downloadItem)
         let downloadIndex = downloads.count - 1
+        // ----------------------------
 
+        self.currentDownloadProcess = process
+        process.terminationHandler = { proc in
+            DispatchQueue.main.async {
+                self.currentDownloadProcess = nil
+                // ... update download status ...
+            }
+        }
+        
         let outputPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = outputPipe
-
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             if let output = String(data: handle.availableData, encoding: .utf8), !output.isEmpty {
                 DispatchQueue.main.async { debugMessages.append(output) }
@@ -436,32 +461,39 @@ struct ContentView: View {
         }
 
         process.terminationHandler = { proc in
-            DispatchQueue.main.async {
-                debugMessages.append("Download finished for \(url)")
-                // Check process status before marking complete
-                if proc.terminationStatus == 0 {
-                     downloads[downloadIndex].status = .completed
-                } else {
-                     downloads[downloadIndex].status = .failed
-                     debugMessages.append("Download failed with status: \(proc.terminationStatus)")
+                DispatchQueue.main.async {
+                    debugMessages.append("Download finished for \(url)")
+                    if proc.terminationStatus == 0 {
+                        // Force UI update with withAnimation
+                        withAnimation {
+                            downloads[downloadIndex].status = .completed
+                        }
+                    } else {
+                        withAnimation {
+                            downloads[downloadIndex].status = .failed
+                        }
+                        debugMessages.append("Download failed with status: \(proc.terminationStatus)")
+                    }
+                    // Explicitly trigger view update
+                    self.currentDownloadProcess = nil
                 }
             }
-        }
+
         do {
             try process.run()
             debugMessages.append("Started download for \(url)")
         } catch {
             debugMessages.append("Failed to start download: \(error.localizedDescription)")
-             downloads[downloadIndex].status = .failed
+            downloads[downloadIndex].status = .failed
         }
     }
 
     func openDownloadsFolder() {
         NSWorkspace.shared.open(downloadDirectory)
     }
+    
 
 } // End ContentView
-
 
 // MARK: - Downloads Popover (Add FocusState)
 
@@ -471,12 +503,14 @@ struct DownloadsPopover: View {
     @Binding var debugMessages: [String]
     @Binding var downloadDirectory: URL
     var pickDirectory: () -> Void
-    var startDownload: (String, URL) -> Void
+    var startDownload: (String, URL, Bool) -> Void
     var openDownloadsFolder: () -> Void
     @Binding var isInitiallyFocused: Bool
     @Binding var currentDownloadProcess: Process?      // <-- Add this
-    var stopDownload: () -> Void                       // <-- Add this
+    var stopDownloadForItem: (DownloadItem) -> Void
+    @State private var showFailed = false
 
+    @Binding var useFLAC: Bool
     @FocusState private var urlFieldIsFocused: Bool
 
     var body: some View {
@@ -489,14 +523,13 @@ struct DownloadsPopover: View {
                 .focused($urlFieldIsFocused)
                 .onSubmit {
                     if !downloadURLString.isEmpty {
-                        startDownload(downloadURLString, downloadDirectory)
+                        startDownload(downloadURLString, downloadDirectory, useFLAC)
                     }
                 }
-                .onAppear {
-                    if isInitiallyFocused {
-                        urlFieldIsFocused = true
-                    }
-                }
+                
+            // New Toggle to choose FLAC format
+            Toggle("Use FLAC if available", isOn: $useFLAC)
+                .font(.system(size: 10))
 
             HStack {
                 Text("Save to:").bold()
@@ -509,54 +542,171 @@ struct DownloadsPopover: View {
                 }
                 .help("Choose download folder")
             }
-            Button("Start Download") {
-                startDownload(downloadURLString, downloadDirectory)
-            }
-            .disabled(downloadURLString.isEmpty)
-
-            // Show Stop button if a download is running
-            if currentDownloadProcess != nil {
-                Button("Stop Current Download") {
-                    stopDownload()
+            HStack {
+                Button("Start Download") {
+                    startDownload(downloadURLString, downloadDirectory, useFLAC)
                 }
-                .foregroundColor(.red)
-                .padding(.vertical, 8)
-            }
+                .disabled(downloadURLString.isEmpty)
 
-            Divider()
-            Text("Ongoing Downloads").font(.subheadline)
-            ForEach(downloads.filter { $0.status == .downloading }) { item in
-                DownloadRow(item: item)
-            }
-            Divider()
-            Text("Completed Downloads").font(.subheadline)
-            ForEach(downloads.filter { $0.status == .completed }) { item in
-                DownloadRow(item: item)
-            }
-            ForEach(downloads.filter { $0.status == .failed }) { item in
-                DownloadRow(item: item)
-            }
-            Button("Open Download Folder") {
-                openDownloadsFolder()
+                Spacer()
+
+                Button(action: openDownloadsFolder) {
+                    Text("Show downloads in Finder")
+                }
             }
             .padding(.top, 8)
+
+            // Ongoing Downloads Section
+            if downloads.contains(where: { $0.status == .downloading }) {
+                Divider()
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(downloads.filter { $0.status == .downloading }) { item in
+                            DownloadRow(item: item, onStop: {
+                                if let process = item.process {
+                                    process.terminate()
+                                    // Update status to failed
+                                    if let idx = downloads.firstIndex(where: { $0.id == item.id }) {
+                                        downloads[idx].status = .failed
+                                        debugMessages.append("Download manually stopped for \(item.fileName)")
+                                    }
+                                }
+                            })
+                        }
+                    }
+                }
+                .frame(minHeight: 40, maxHeight: 200) // min for 1 row, max for 5+
+            }
+
+            // Completed Downloads Section
+            if downloads.contains(where: { $0.status == .completed }) {
+                Divider()
+                //Text("Completed Downloads").font(.subheadline)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(downloads.filter { $0.status == .completed }) { item in
+                            DownloadRow(item: item)
+                        }
+                    }
+                }
+                .frame(minHeight: 20, maxHeight: 80) //
+            }
+
+            // Failed Downloads Section (with DisclosureGroup)
+            if downloads.contains(where: { $0.status == .failed }) {
+                DisclosureGroup(isExpanded: $showFailed) {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(downloads.filter { $0.status == .failed }) { item in
+                                DownloadRow(item: item)
+                            }
+                        }
+                    }
+                    .frame(minHeight: 20, maxHeight: 120) //
+                } label: {
+                    HStack {
+                        Text("Failed Downloads (\(downloads.filter { $0.status == .failed }.count))")
+                            .font(.subheadline)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { showFailed.toggle() }
+                }
+                .onAppear {
+                    if isInitiallyFocused {
+                        urlFieldIsFocused = true
+                    }
+                }
+            }
         }
+        .frame(minWidth: 400) // min for 1 row, max for
     }
 }
 
-
-
-
 struct DownloadRow: View {
     let item: DownloadItem
+    var onStop: (() -> Void)? = nil
+
+    // For ASCII animation: rotating through ["𓊝", "﹏𓊝", "﹏﹏𓊝", "﹏﹏𓊝﹏", "﹏﹏𓊝﹏𓂁", "﹏﹏﹏𓊝𓂁⊹", "﹏﹏𓊝⊹", "﹏𓊝"]
+    @State private var asciiIndex: Int = 0
+    private let asciiFrames = [
+        "🦑———✧———",
+        "—🦑——✧———",
+        "——🦑—✧———",
+        "———🦑✧———",
+        "———🦑—✧——",
+        "———🦑——✧—",
+        "———🦑———✧",
+        "———🦑——✧—",
+        "———🦑—✧——",
+        "———🦑✧———",
+        "——🦑—✧———",
+        "—🦑——✧———",
+        "🦑———✧———",
+        "🦐———✦———",
+        "—🦐——✦———",
+        "——🦐—✦———",
+        "———🦐✦———",
+        "———🦐—✦——",
+        "———🦐——✦—",
+        "———🦐———✦",
+        "———🦐——✦—",
+        "———🦐—✦——",
+        "———🦐✦———",
+        "——🦐—✦———",
+        "—🦐——✦———",
+        "🦐———✦———",
+        "🦞———❂———",
+        "—🦞——❂———",
+        "——🦞—❂———",
+        "———🦞❂———",
+        "———🦞—❂——",
+        "———🦞——❂—",
+        "———🦞———❂",
+        "———🦞——❂—",
+        "———🦞—❂——",
+        "———🦞❂———",
+        "——🦞—❂———",
+        "—🦞——❂———",
+        "🦞———❂———"
+    ]
+    private let animationInterval = 0.1 // seconds
+
     var body: some View {
         HStack {
             Text(item.fileName)
                 .lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading)
             Spacer()
             if item.status == .downloading {
-                ProgressView()
-                    .frame(width: 60)
+                HStack(spacing: 8) {
+                    // ASCII animation
+                    Text(asciiFrames[asciiIndex])
+                        .font(.system(size: 16, design: .monospaced))
+                        .frame(width: 128, alignment: .trailing)
+                        .accessibilityLabel("Downloading")
+                        .onAppear {
+                            // Start timer for ASCII animation
+                            Timer.scheduledTimer(withTimeInterval: animationInterval, repeats: true) { timer in
+                                asciiIndex = (asciiIndex + 1) % asciiFrames.count
+                                // Stop timer if download is no longer active
+                                if item.status != .downloading {
+                                    timer.invalidate()
+                                }
+                            }
+                        }
+                    // Optionally, show percent if you want:
+                    // Text("\(Int(item.progress * 100))%")
+                    //     .font(.caption2)
+                    //     .foregroundColor(.secondary)
+
+                    // Native-style stop/cancel button
+                    Button(action: { onStop?() }) {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 20, weight: .regular))
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                    .help("Stop this download")
+                }
             } else if item.status == .completed {
                 Image(systemName: "checkmark.circle")
                     .foregroundColor(.green)
@@ -566,33 +716,44 @@ struct DownloadRow: View {
             }
         }
         .font(.system(size: 12, design: .monospaced))
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
+
+
+
+
+
 // MARK: - Debug Console
 
 struct DebugConsole: View {
     let messages: [String]
-
+    let redOrange = Color(red: 1.0, green: 0.35, blue: 0.0)
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 Text(messages.joined(separator: "\n"))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(redOrange)
                     .textSelection(.enabled)
-                    .padding(2)
+                    .padding(4)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .id("consoleText")
+                // Hidden anchor for scrolling
+                Color.clear.frame(height: 1).id("bottom")
             }
-            .background(Color.black.opacity(0.08))
+            .background(Color.black)
             .cornerRadius(6)
+            .defaultScrollAnchor(.bottom) // SwiftUI 5+ auto-scrolls unless user scrolls up[9]
             .onChange(of: messages.count) { _, _ in
                 if messages.count > 0 {
                     withAnimation {
-                        proxy.scrollTo(messages.count - 1, anchor: .bottom)
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
         }
+        .background(Color.black)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

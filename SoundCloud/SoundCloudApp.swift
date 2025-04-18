@@ -40,6 +40,13 @@ struct SoundCloudApp: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .newItem) {
+                Button("Reload Page") {
+                    tabManager.selectedTab?.container.reload()
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+                .disabled(tabManager.selectedTab == nil)
+            }
         }
         #if os(macOS)
         if #available(macOS 12.0, *) {
