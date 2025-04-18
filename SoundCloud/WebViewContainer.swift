@@ -1,160 +1,164 @@
-//
-//  WebViewContainer.swift
-//  SoundCloud
-//
-//  Created by Jaufré on 11/02/2025.
-//
-
 import Foundation
 import SwiftUI
 import WebKit
+import Combine // <-- Import Combine
 
 class WebViewContainer: NSObject, ObservableObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     var webView: CustomWKWebView
     @Published var currentURL: URL?
     @Published var currentTitle: String?
+    @Published var canGoBack: Bool = false // <-- Add Published property
+    @Published var canGoForward: Bool = false // <-- Optional: Add if needed later
+
     var onOpenNewTab: ((URL) -> Void)?
     var onOpenNewWindow: ((URL) -> Void)?
-    
+
     private var coordinator: Coordinator!
+    private var cancellables = Set<AnyCancellable>() // <-- For Combine observers
+
+    // --- Add Navigation Methods ---
+    func goBack() {
+        webView.goBack()
+    }
+
+    func goForward() {
+        webView.goForward()
+    }
+
+    func reload() {
+        webView.reload()
+    }
+    // --- End Navigation Methods ---
+
     
     init(url: URL) {
-        // Create a configuration with a user content controller.
         let config = WKWebViewConfiguration()
         let contentController = WKUserContentController()
-        
-        // JavaScript to intercept navigation changes and send an object with URL and title.
+
+        // Basic JS to monitor URL and Title changes (could be more robust)
         let js = """
         (function() {
-            function notifyURLChange() {
-                var info = { "url": document.location.href, "title": document.title };
-                window.webkit.messageHandlers.urlChanged.postMessage(info);
+            var currentHref = '';
+            var currentTitle = '';
+            function checkChanges() {
+                if (window.location.href !== currentHref || document.title !== currentTitle) {
+                    currentHref = window.location.href;
+                    currentTitle = document.title;
+                    window.webkit.messageHandlers.urlChanged.postMessage({url: currentHref, title: currentTitle});
+                }
+                setTimeout(checkChanges, 500); // Check periodically
             }
-            var pushState = history.pushState;
-            history.pushState = function() {
-                pushState.apply(history, arguments);
-                setTimeout(notifyURLChange, 100);
-            };
-            var replaceState = history.replaceState;
-            history.replaceState = function() {
-                replaceState.apply(history, arguments);
-                setTimeout(notifyURLChange, 100);
-            };
-            window.addEventListener('popstate', function() {
-                setTimeout(notifyURLChange, 100);
-            });
+            checkChanges();
         })();
         """
-        let userScript = WKUserScript(source: js,
-                                      injectionTime: .atDocumentEnd,
-                                      forMainFrameOnly: false)
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         contentController.addUserScript(userScript)
         config.userContentController = contentController
         config.websiteDataStore = WKWebsiteDataStore.default()
-        
-        
-        
-        // Initialize all stored properties BEFORE calling super.init().
+
         self.webView = CustomWKWebView(frame: .zero, configuration: config)
         self.currentURL = url
-        self.currentTitle = nil
-        
-        // Now that all stored properties are initialized, call super.init().
-        super.init()
-        
-        // Now safely use self.
-        contentController.add(self, name: "urlChanged")
-        
-        // Set up the navigation and UI delegates.
+        self.currentTitle = nil // Initial title is unknown
+
+        super.init() // Call super.init() after initializing stored properties
+
+        contentController.add(self, name: "urlChanged") // Add message handler
+
         self.coordinator = Coordinator(self)
-        self.webView.navigationDelegate = self.coordinator
-        self.webView.uiDelegate = self.coordinator
-                
-        let request = URLRequest(url: url)
-        self.webView.load(request)
-                
+        self.webView.navigationDelegate = self.coordinator // Use Coordinator
+        self.webView.uiDelegate = self.coordinator       // Use Coordinator
+
+        // --- Add Combine observers for navigation state ---
+        webView.publisher(for: \.canGoBack)
+            .receive(on: DispatchQueue.main) // Ensure updates are on the main thread
+            .assign(to: \.canGoBack, on: self)
+            .store(in: &cancellables)
+
+        webView.publisher(for: \.canGoForward)
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.canGoForward, on: self)
+            .store(in: &cancellables)
+        // --- End Combine observers ---
+        
+        // Pass through callbacks from CustomWKWebView
         self.webView.onOpenNewTab = { [weak self] url in
-                    self?.onOpenNewTab?(url)
+            self?.onOpenNewTab?(url)
         }
         self.webView.onOpenNewWindow = { [weak self] url in
-                    self?.onOpenNewWindow?(url)
+            self?.onOpenNewWindow?(url)
         }
+
+        // Load the initial URL
+        let request = URLRequest(url: url)
+        self.webView.load(request)
     }
-    
-    
-    
+
+
+    // Handle messages from JavaScript
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "urlChanged",
            let dict = message.body as? [String: Any],
            let newURLString = dict["url"] as? String,
            let newTitle = dict["title"] as? String,
            let newURL = URL(string: newURLString) {
+
             DispatchQueue.main.async {
-                self.currentURL = newURL
-                self.currentTitle = newTitle
+                 // Only update if changed to avoid potential loops/redundancy
+                if self.currentURL != newURL {
+                    self.currentURL = newURL
+                }
+                if self.currentTitle != newTitle {
+                   self.currentTitle = newTitle
+                }
             }
         }
     }
-    
-    // Updated method signature to match WKNavigationDelegate protocol
-       @objc func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-           print("Navigation did commit.")
-       }
 
-       // Updated method signature to match WKNavigationDelegate protocol
-       @objc func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-           print("Navigation finished successfully.")
-           if let newURL = webView.url {
-               DispatchQueue.main.async {
-                   self.currentURL = newURL
-                   self.currentTitle = webView.title
-               }
-           }
-       }
-
-       // Updated method signature to match WKNavigationDelegate protocol
-       @objc func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-           print("Navigation error: \(error.localizedDescription)")
-       }
-   }
-    
-    // MARK: - Coordinator
-class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    // MARK: - Coordinator (Ensure delegate methods update state correctly if needed)
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var parent: WebViewContainer
-        
+
         init(_ parent: WebViewContainer) {
             self.parent = parent
         }
-        
+
+        // --- Existing Delegate Methods ---
+
+        // (Ensure didFinish updates title/URL if JS method fails)
+         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            print("Navigation finished. canGoBack: \(webView.canGoBack), canGoForward: \(webView.canGoForward)")
+             // Update URL and Title from the webView as a fallback
+             if let newURL = webView.url {
+                DispatchQueue.main.async {
+                    if self.parent.currentURL != newURL {
+                         self.parent.currentURL = newURL
+                    }
+                     let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                     if !title.isEmpty && self.parent.currentTitle != title {
+                         self.parent.currentTitle = title
+                     }
+                 }
+            }
+            // Note: canGoBack/canGoForward are handled by Combine KVO publishers now.
+        }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             print("Navigation error: \(error.localizedDescription)")
+            // Handle error appropriately (e.g., show an alert)
         }
-        
+
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             print("Provisional navigation error: \(error.localizedDescription)")
+            // Handle error appropriately
         }
-        
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            print("Navigation finished successfully.")
-            if let newURL = webView.url {
-                DispatchQueue.main.async {
-                    self.parent.currentURL = newURL
-                    self.parent.currentTitle = webView.title
-                }
-            }
-        }
-        
-        func webView(_ webView: WKWebView,
-                     createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
-                     windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-                DispatchQueue.main.async {
-                    self.parent.onOpenNewTab?(url)
-                }
+
+        // Handle requests to open new windows/tabs
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            guard let url = navigationAction.request.url else { return nil }
+            DispatchQueue.main.async {
+                self.parent.onOpenNewTab?(url) // Directly trigger new tab
             }
             return nil
         }
     }
-
-
+}

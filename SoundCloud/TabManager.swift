@@ -40,25 +40,57 @@ class TabManager: ObservableObject {
     @Published var selectedTab: TabItem?
     
     init() {
-        // Start with one default tab.
         let defaultURL = URL(string: "https://soundcloud.com")!
         let initialTab = TabItem(url: defaultURL)
+        // Set up closures for the initial tab's container!
+        initialTab.container.onOpenNewTab = { [weak self] url in
+            DispatchQueue.main.async {
+                print(">>> Request to open in NEW TAB: \(url)")
+                self?.addTab(url: url)
+            }
+        }
+        initialTab.container.onOpenNewWindow = { [weak self] url in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                print(">>> Request to open in NEW WINDOW: \(url)")
+                _ = createNewWindow(for: url)
+            }
+        }
+
         tabs.append(initialTab)
         selectedTab = initialTab
     }
+
     
     func addTab(url: URL) {
-        let newTab = TabItem(url: url)
-        newTab.container.onOpenNewTab = { [weak self] url in
-            self?.addTab(url: url)
+        DispatchQueue.main.async {
+            guard self.tabs.count < 10 else {
+                NSSound.beep()
+                return
+            }
+            
+            let newTab = TabItem(url: url)
+            
+            // Set closure for new tab actions:
+            newTab.container.onOpenNewTab = { [weak self] url in
+                DispatchQueue.main.async {
+                    print(">>> Request to open in NEW TAB: \(url)")
+                    self?.addTab(url: url)
+                }
+            }
+            newTab.container.onOpenNewWindow = { url in
+                DispatchQueue.main.async {
+                    print(">>> Request to open in NEW WINDOW: \(url)")
+                    _ = createNewWindow(for: url)
+                }
+            }
+            
+            self.tabs.append(newTab)
+            self.selectedTab = newTab
+            print("--- Tab added: \(url). Total tabs: \(self.tabs.count)")
         }
-        newTab.container.onOpenNewWindow = { url in
-            // Your window opening logic.
-            print("Open new window for \(url)")
-        }
-        tabs.append(newTab)
-        selectedTab = newTab
     }
+
 
 
     
@@ -86,3 +118,4 @@ extension URL {
         return comps.last!.capitalized
     }
 }
+

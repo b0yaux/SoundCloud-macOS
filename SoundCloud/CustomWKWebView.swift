@@ -21,87 +21,52 @@ class CustomWKWebView: WKWebView {
     /// Tracks which action was triggered (if needed in delegate methods).
     var contextualMenuAction: ContextualMenuAction?
     
-    override func menu(for event: NSEvent) -> NSMenu? {
-        // If this is a middle click (buttonNumber == 2), don't modify the menu.
-        if event.buttonNumber == 2 {
-            return super.menu(for: event)
-        }
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        menu.items.removeAll { $0.identifier?.rawValue == "OpenLinkInNewTab" }
+        menu.items.removeAll { $0.identifier?.rawValue == "OpenLinkInNewWindow" }
         
-        // For left/right clicks, get the default menu.
-        let menu = super.menu(for: event) ?? NSMenu()
-        
-        // Iterate through the menu items and rename the default "Open Link in New Window" item.
-        for item in menu.items {
-            if let id = item.identifier?.rawValue, id == "WKMenuItemIdentifierOpenLinkInNewWindow" {
-                item.title = "Open Link in New Tab"
-            }
-        }
-        
-        // Now, for a non-middle click, get the link using synchronous JavaScript.
         let point = convert(event.locationInWindow, from: nil)
         let js = "document.elementFromPoint(\(point.x), \(point.y))?.closest('a')?.href;"
         
-        var linkURLString: String? = nil
-        let semaphore = DispatchSemaphore(value: 0)
-        evaluateJavaScript(js) { (result, error) in
-            if let urlStr = result as? String {
-                linkURLString = urlStr
-            }
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + 0.5)
-        
-        // If a valid SoundCloud link is found and the default item is missing, add one.
-        if let urlStr = linkURLString,
-           let url = URL(string: urlStr),
-           url.host?.contains("soundcloud.com") == true {
-            if !menu.items.contains(where: { $0.title == "Open Link in New Tab" }) {
-                let newItem = NSMenuItem(title: "Open Link in New Tab", action: #selector(openNewTab(_:)), keyEquivalent: "")
-                newItem.target = self
-                newItem.representedObject = url
-                menu.addItem(newItem)
-            }
-        }
-        
-        return menu
-    }
-
-    
-
-
-    
-    @objc func openNewTab(_ sender: NSMenuItem) {
-        if let url = sender.representedObject as? URL {
-            self.contextualMenuAction = .openNewTab
-            onOpenNewTab?(url)
+        evaluateJavaScript(js) { [weak self] result, error in
+            guard let self = self,
+                  let urlStr = result as? String,
+                  let url = URL(string: urlStr),
+                  url.host?.contains("soundcloud.com") == true else { return }
+            
+            // Add "Open Link in New Tab" item
+            let newTabItem = NSMenuItem(title: "Open Link in New Tab", action: #selector(self.openNewTabAction(_:)), keyEquivalent: "")
+            newTabItem.identifier = NSUserInterfaceItemIdentifier("OpenLinkInNewTab")
+            newTabItem.target = self
+            newTabItem.representedObject = url  // Store the URL directly
+            menu.insertItem(newTabItem, at: 0)
+            
+            // Similarly, add "Open Link in New Window" item if desired.
         }
     }
-    
-    @objc func openNewWindow(_ sender: NSMenuItem) {
-        if let url = sender.representedObject as? URL {
-            self.contextualMenuAction = .openNewWindow
-            onOpenNewWindow?(url)
-        }
-    }
-}
 
-extension CustomWKWebView: WKUIDelegate {
-    func webView(_ webView: WKWebView,
-                 createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction,
-                 windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-            DispatchQueue.main.async {
-                if let customWebView = webView as? CustomWKWebView {
-                    if let action = customWebView.contextualMenuAction, action == .openNewTab {
-                        customWebView.onOpenNewTab?(url)
-                    } else {
-                        customWebView.onOpenNewWindow?(url)
-                    }
-                    customWebView.contextualMenuAction = nil
-                }
-            }
+
+    @objc func openNewTabAction(_ sender: NSMenuItem) {
+        // Use a direct URL cast because the represented object was set to a URL
+        guard let url = sender.representedObject as? URL else {
+            print("Error: representedObject is not a URL")
+            return
         }
-        return nil
+        DispatchQueue.main.async { // Ensure we're on the main thread
+            self.onOpenNewTab?(url)
+            print("Custom Menu Action: Open in New Tab requested for \(url)")
+        }
     }
+
+
+    @objc func openNewWindowAction(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        DispatchQueue.main.async {
+            self.onOpenNewWindow?(url)
+            print("Custom Menu Action: Open in New Window requested for \(url)")
+        }
+    }
+
+
 }
