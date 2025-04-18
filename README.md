@@ -9,7 +9,7 @@ SoundCloud web app wrapper for MacOs with tab management and .
 - Better navigation : Back and Forward navigation buttons with state tracking and proper Open Link in New Tab command in context menu.
 - UI/UX polish
 
-![App screenshot.](screenshot.png)
+![App screenshot.](screenshot1.png)
 
 
 ///////// Forked from https://github.com/rlacombe/SoundCloud-macOS/ :
