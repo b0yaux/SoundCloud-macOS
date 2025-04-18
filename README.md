@@ -1,20 +1,23 @@
 # SoundCloud for macOS
 
-I just added Tab management and tab bar UI, use cmd+T for new tab/cmd+W to close tab, and option click (right-click) > Open In a New Window to open in a New Tab
+SoundCloud web app wrapper for MacOs with tab management and .
 
-Things to implement maybe : 
-    - Custom menu (right-click menu)
-    - Shortcut for open in a new tab
+- Instant download using scdl in a downloader popover with URL pre-fill. When standing on a track/album/playlist/user page, download super easily using shortcuts "cmd+D" (show download popover) and "Enter" (start download of pre-filled URL) or using GUI.
+- Debug console ladybug for scdl / ffmpeg troubleshooting
+- Added preferences panel: for now only light/dark mode settings included there
+- "Cmd+T", "Cmd+W", "Cmd+D", "Cmd+L", and "Cmd+," keyboard shortcuts
+- Better navigation : Back and Forward navigation buttons with state tracking and proper Open Link in New Tab command in context menu.
+- UI/UX polish
+
+![App screenshot.](screenshot.png)
 
 
-    
-/////////
+///////// Forked from https://github.com/rlacombe/SoundCloud-macOS/ :
+
 
 SoundCloud doesn't offer a native macOS app: let me fix that for them! 
 
 This is a very simple Swift application that wraps the SoundCloud web app using a `WKWebView`. It allows you to log in to SoundCloud (email/password, no OAuth for now) and persist your session via cookies. 
-
-![App screenshot.](screenshot.png)
 
 ## Requirements
 
