@@ -29,9 +29,22 @@
 		7A14313A2D55832F00203EFA /* SoundCloudUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SoundCloudUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C2C33B222DB467BF00EFA2CA /* Exceptions for "SoundCloud" folder in "SoundCloud" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7A14311E2D55832D00203EFA /* SoundCloud */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7A1431212D55832D00203EFA /* SoundCloud */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C2C33B222DB467BF00EFA2CA /* Exceptions for "SoundCloud" folder in "SoundCloud" target */,
+			);
 			path = SoundCloud;
 			sourceTree = "<group>";
 		};
@@ -377,6 +390,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"SoundCloud/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SoundCloud/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -415,6 +429,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"SoundCloud/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SoundCloud/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

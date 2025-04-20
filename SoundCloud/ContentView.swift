@@ -9,6 +9,95 @@
 import SwiftUI
 import os
 import Foundation
+import AppKit
+import Combine
+
+// MARK: Debug Console Model
+class DebugConsoleModel: ObservableObject {
+    @Published private(set) var messages: [String] = []
+    private var activationCount = 0 // Tracks if the console view is active
+    
+    // Replaces all messages (good for initial state or full refresh)
+    func set(_ msg: String) {
+        DispatchQueue.main.async { // Ensure updates happen on the main thread
+            self.messages = [msg]
+        }
+    }
+    // Appends a single message (good for logs)
+    func append(_ msg: String) {
+        DispatchQueue.main.async { // Ensure updates happen on the main thread
+            // Split multi-line messages into separate entries if needed
+            let lines = msg.split(separator: "\n").map(String.init)
+            self.messages.append(contentsOf: lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        }
+    }
+    // Appends multiple messages at once
+    func append(contentsOf newMessages: [String]) {
+         DispatchQueue.main.async {
+            self.messages.append(contentsOf: newMessages.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+         }
+     }
+    // To potentially adjust scrolling behavior based on view presence
+    func trackActivation(_ isActive: Bool) {
+        activationCount += isActive ? 1 : -1
+    }
+}
+
+
+func checkDependencies(completion: @escaping (String) -> Void) {
+    print("checkDependencies called")
+    let scdlPath = "\(realUserHomeDirectory())/.local/bin/scdl"
+    let ffmpegCandidates = [
+        "/usr/local/bin/ffmpeg",
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/bin/ffmpeg"
+    ]
+    
+    let fileManager = FileManager.default
+
+    var missing: [String] = []
+
+    // Check scdl
+    if !fileManager.isExecutableFile(atPath: scdlPath) {
+        missing.append("scdl (expected at \(scdlPath))")
+    }
+
+    // Check ffmpeg
+    let ffmpegFound = ffmpegCandidates.contains { fileManager.isExecutableFile(atPath: $0) }
+    if !ffmpegFound {
+        missing.append("ffmpeg (expected in /usr/local/bin, /opt/homebrew/bin, or /usr/bin)")
+    }
+
+    // Compose message
+    if missing.isEmpty {
+        print("Dependencies OK")
+        completion("""
+                __  _
+            .-.'  `; `-._  __  _
+           (_,         .-:'  `; `-._
+         ,'o°(        (_,           )
+        (__,-'      ,'o°(            )>
+           (       (__,-'            )
+            `-'._.--._(             )
+               |||  |||`-'._.--._.-'
+                          |||  ||| 
+        console: ready to download
+        """)
+    } else {
+        print("Dependencies missing: \(missing)")
+        let msg = """
+        console: missing dependencies: \(missing.joined(separator: ", "))
+        to fix:
+        - install scdl ("pipx install scdl" or "pip install scdl")
+        - install ffmpeg ("brew install ffmpeg")
+        - relaunch SoundCloud app
+        """
+        completion(msg)
+    }
+}
+
+
+// MARK: - Utility Functions
 
 func realUserHomeDirectory() -> String {
     if let pw = getpwuid(getuid()), let home = pw.pointee.pw_dir {
@@ -16,19 +105,6 @@ func realUserHomeDirectory() -> String {
     }
     return NSHomeDirectory()
 }
-
-struct DownloadItem: Identifiable {
-    enum Status { case downloading, completed, failed }
-    let id = UUID()
-    let url: URL
-    var status: Status
-    var progress: Double
-    var fileName: String
-    var process: Process? // Add this
-}
-
-
-import AppKit
 
 func selectDirectory(completion: @escaping (URL?) -> Void) {
     let panel = NSOpenPanel()
@@ -45,11 +121,23 @@ func selectDirectory(completion: @escaping (URL?) -> Void) {
     }
 }
 
+// MARK: - Download Item Struct
+struct DownloadItem: Identifiable {
+    enum Status { case downloading, completed, failed }
+    let id = UUID()
+    let url: URL
+    var status: Status
+    var progress: Double
+    var fileName: String
+    var process: Process? // Add this
+}
+
+
+
 
 
 struct ContentView: View {
     @EnvironmentObject var tabManager: TabManager
-    @State private var debugMessages: [String] = []
     @State private var showDownloadsPopover = false
     @State private var showDebugPopover = false
     @State private var downloadURLString: String = "" // Single source for URL
@@ -58,7 +146,8 @@ struct ContentView: View {
     @State private var isDownloadsPopoverFocused: Bool = false // For focusing TextField
     @State private var currentDownloadProcess: Process? = nil
     @State private var useFLAC: Bool = false
-    
+    @StateObject private var debugConsole = DebugConsoleModel()
+
 
 
     let logger = Logger(subsystem: "com.yourapp.soundcloud", category: "ui")
@@ -103,7 +192,7 @@ struct ContentView: View {
             currentDownloadProcess = nil
             if let idx = downloads.firstIndex(where: { $0.id == item.id }) {
                 downloads[idx].status = .failed
-                debugMessages.append("Download manually stopped for \(item.fileName)")
+                debugConsole.append("Download manually stopped for \(item.fileName)")
             }
         }
     }
@@ -168,16 +257,16 @@ struct ContentView: View {
                     .keyboardShortcut("d", modifiers: [.command]) // Use Cmd+D standard
                     .popover(isPresented: $showDownloadsPopover) {
                         DownloadsPopover(
+                            debugConsole: debugConsole,
                             downloadURLString: $downloadURLString,
                             downloads: $downloads,
-                            debugMessages: $debugMessages,
                             downloadDirectory: $downloadDirectory,
                             pickDirectory: pickDirectory,
                             startDownload: startDownload,
                             openDownloadsFolder: openDownloadsFolder,
                             isInitiallyFocused: $isDownloadsPopoverFocused,
                             currentDownloadProcess: $currentDownloadProcess,
-                            stopDownloadForItem: stopDownload, // <-- NEW
+                            stopDownloadForItem: stopDownload,
                             useFLAC: $useFLAC
                         )
 
@@ -204,7 +293,7 @@ struct ContentView: View {
                     .help("Show Debug Console (Cmd+L)")
                     .keyboardShortcut("l", modifiers: [.command]) // Use Cmd+L standard
                     .popover(isPresented: $showDebugPopover) {
-                        DebugConsole(messages: debugMessages)
+                        DebugConsole(model: debugConsole)
                             .frame(width: 420, height: 220)
                             .padding()
                     }
@@ -214,6 +303,18 @@ struct ContentView: View {
         .onAppear {
             restoreDownloadDirectory()
             setupWindowAndEvents()
+            
+            debugConsole.set("console: checking dependencies...")
+            
+            // Check dependencies async
+            DispatchQueue.global(qos: .userInitiated).async {
+               checkDependencies { msg in
+                   // Update console model on main thread with the result
+                   DispatchQueue.main.async {
+                       debugConsole.set(msg) // <-- Use model's set method
+                   }
+               }
+            }
         }
     } // End body
 
@@ -237,6 +338,7 @@ struct ContentView: View {
         }
         .frame(height: 30)
         .background(Color(NSColor.windowBackgroundColor))
+        // .overlay(Divider(), alignment: .top)
     }
 
 
@@ -247,6 +349,7 @@ struct ContentView: View {
                     ForEach(tabManager.tabs) { tab in
                         // Pass the container's view model if PersistentWebView needs it
                         PersistentWebView(container: tab.container)
+                            .zIndex(tabManager.selectedTab?.id == tab.id ? 1 : 0)
                             .opacity(tabManager.selectedTab?.id == tab.id ? 1 : 0)
                             .allowsHitTesting(tabManager.selectedTab?.id == tab.id)
                             // No need for onAppear here anymore for callbacks, set in TabManager
@@ -408,7 +511,7 @@ struct ContentView: View {
     func startDownload(_ urlString: String, to directory: URL, useFLAC: Bool) {
 
         guard let url = URL(string: urlString), !urlString.isEmpty else {
-            debugMessages.append("No valid URL to download.")
+            debugConsole.append("No valid URL to download.")
             return
         }
         
@@ -421,9 +524,9 @@ struct ContentView: View {
         arguments.append("-c")
         
         
-        debugMessages.append("Running: \(scdlPath) \(arguments.joined(separator: " "))")
+        debugConsole.append("Running: \(scdlPath) \(arguments.joined(separator: " "))")
         if !FileManager.default.isExecutableFile(atPath: scdlPath) {
-            debugMessages.append("ERROR: scdl not found at \(scdlPath).")
+            debugConsole.append("ERROR: scdl not found at \(scdlPath).")
             return
         }
         
@@ -456,13 +559,13 @@ struct ContentView: View {
         process.standardError = outputPipe
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             if let output = String(data: handle.availableData, encoding: .utf8), !output.isEmpty {
-                DispatchQueue.main.async { debugMessages.append(output) }
+                DispatchQueue.main.async { debugConsole.append(output) }
             }
         }
 
         process.terminationHandler = { proc in
                 DispatchQueue.main.async {
-                    debugMessages.append("Download finished for \(url)")
+                    debugConsole.append("Download finished for \(url)")
                     if proc.terminationStatus == 0 {
                         // Force UI update with withAnimation
                         withAnimation {
@@ -472,7 +575,7 @@ struct ContentView: View {
                         withAnimation {
                             downloads[downloadIndex].status = .failed
                         }
-                        debugMessages.append("Download failed with status: \(proc.terminationStatus)")
+                        debugConsole.append("Download failed with status: \(proc.terminationStatus)")
                     }
                     // Explicitly trigger view update
                     self.currentDownloadProcess = nil
@@ -481,9 +584,9 @@ struct ContentView: View {
 
         do {
             try process.run()
-            debugMessages.append("Started download for \(url)")
+            debugConsole.append("Started download for \(url)")
         } catch {
-            debugMessages.append("Failed to start download: \(error.localizedDescription)")
+            debugConsole.append("Failed to start download: \(error.localizedDescription)")
             downloads[downloadIndex].status = .failed
         }
     }
@@ -498,9 +601,9 @@ struct ContentView: View {
 // MARK: - Downloads Popover (Add FocusState)
 
 struct DownloadsPopover: View {
+    @ObservedObject var debugConsole: DebugConsoleModel // <-- ADD THIS LINE
     @Binding var downloadURLString: String
     @Binding var downloads: [DownloadItem]
-    @Binding var debugMessages: [String]
     @Binding var downloadDirectory: URL
     var pickDirectory: () -> Void
     var startDownload: (String, URL, Bool) -> Void
@@ -547,11 +650,12 @@ struct DownloadsPopover: View {
                     startDownload(downloadURLString, downloadDirectory, useFLAC)
                 }
                 .disabled(downloadURLString.isEmpty)
+                .keyboardShortcut(.defaultAction)
 
                 Spacer()
 
                 Button(action: openDownloadsFolder) {
-                    Text("Show downloads in Finder")
+                    Text("Show in Finder")
                 }
             }
             .padding(.top, 8)
@@ -568,15 +672,15 @@ struct DownloadsPopover: View {
                                     // Update status to failed
                                     if let idx = downloads.firstIndex(where: { $0.id == item.id }) {
                                         downloads[idx].status = .failed
-                                        debugMessages.append("Download manually stopped for \(item.fileName)")
+                                        debugConsole.append("Download manually stopped for \(item.fileName)")
                                     }
                                 }
-                            })
-                        }
-                    }
-                }
-                .frame(minHeight: 40, maxHeight: 200) // min for 1 row, max for 5+
-            }
+                            }) // End of DownloadRow
+                        } // End of ForEach
+                    } // End of Vstack
+                } // End of ScrollView
+                .frame(minHeight: 40, maxHeight: 200)
+            } // End of if downloading
 
             // Completed Downloads Section
             if downloads.contains(where: { $0.status == .completed }) {
@@ -627,47 +731,13 @@ struct DownloadRow: View {
     var onStop: (() -> Void)? = nil
 
     // For ASCII animation: rotating through ["𓊝", "﹏𓊝", "﹏﹏𓊝", "﹏﹏𓊝﹏", "﹏﹏𓊝﹏𓂁", "﹏﹏﹏𓊝𓂁⊹", "﹏﹏𓊝⊹", "﹏𓊝"]
+    // 𓆝 𓆟 𓆞 𓆝 𓆟
+    
     @State private var asciiIndex: Int = 0
     private let asciiFrames = [
-        "🦑———✧———",
-        "—🦑——✧———",
-        "——🦑—✧———",
-        "———🦑✧———",
-        "———🦑—✧——",
-        "———🦑——✧—",
-        "———🦑———✧",
-        "———🦑——✧—",
-        "———🦑—✧——",
-        "———🦑✧———",
-        "——🦑—✧———",
-        "—🦑——✧———",
-        "🦑———✧———",
-        "🦐———✦———",
-        "—🦐——✦———",
-        "——🦐—✦———",
-        "———🦐✦———",
-        "———🦐—✦——",
-        "———🦐——✦—",
-        "———🦐———✦",
-        "———🦐——✦—",
-        "———🦐—✦——",
-        "———🦐✦———",
-        "——🦐—✦———",
-        "—🦐——✦———",
-        "🦐———✦———",
-        "🦞———❂———",
-        "—🦞——❂———",
-        "——🦞—❂———",
-        "———🦞❂———",
-        "———🦞—❂——",
-        "———🦞——❂—",
-        "———🦞———❂",
-        "———🦞——❂—",
-        "———🦞—❂——",
-        "———🦞❂———",
-        "——🦞—❂———",
-        "—🦞——❂———",
-        "🦞———❂———"
+        // "————————♬","🐌—————♬—","—🐌———♬——","——🐌—♬———","———🐌✧———","—————🐌——","———————🐌",
+       // "𓆟","𓆝","𓆞","𓆝","𓆟"
+        ".....","....o", "...oO", "..oOo", ".oOo.", "oOo..", "Oo...", "o....",
     ]
     private let animationInterval = 0.1 // seconds
 
@@ -727,12 +797,15 @@ struct DownloadRow: View {
 // MARK: - Debug Console
 
 struct DebugConsole: View {
-    let messages: [String]
+    @ObservedObject var model: DebugConsoleModel // Keep this
+    // REMOVE: let messages: [String]
     let redOrange = Color(red: 1.0, green: 0.35, blue: 0.0)
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                Text(messages.joined(separator: "\n"))
+                // Use model.messages directly here
+                Text(model.messages.joined(separator: "\n"))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(redOrange)
                     .textSelection(.enabled)
@@ -744,14 +817,20 @@ struct DebugConsole: View {
             }
             .background(Color.black)
             .cornerRadius(6)
-            .defaultScrollAnchor(.bottom) // SwiftUI 5+ auto-scrolls unless user scrolls up[9]
-            .onChange(of: messages.count) { _, _ in
-                if messages.count > 0 {
-                    withAnimation {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
+            // Use defaultScrollAnchor for auto-scrolling on append
+            .defaultScrollAnchor(.bottom)
+             // Update onChange to observe the model's messages count
+            .onChange(of: model.messages.count) { _, _ in
+                // Optional: Explicit scroll if defaultScrollAnchor isn't sufficient
+                // This ensures scrolling even if the user scrolled up manually before new messages arrived
+                // if model.messages.count > 0 {
+                //     withAnimation {
+                //        proxy.scrollTo("bottom", anchor: .bottom)
+                //     }
+                // }
             }
+            .onAppear { model.trackActivation(true) }
+            .onDisappear { model.trackActivation(false) }
         }
         .background(Color.black)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

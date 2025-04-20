@@ -97,13 +97,17 @@ class TabManager: ObservableObject {
     func closeTab(_ tab: TabItem) {
         // Remove the tab from the array.
         tabs.removeAll { $0.id == tab.id }
-        
         // If the closed tab was the selected one,
         // set the selected tab to the last tab in the list.
         if selectedTab?.id == tab.id {
             selectedTab = tabs.last
         }
+        // If there are no tabs left, quit the app.
+        if tabs.isEmpty {
+            NSApp.terminate(nil)
+        }
     }
+
 }
 
 extension URL {
